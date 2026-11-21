@@ -7,8 +7,6 @@
         <key>Bundles</key>
         <array>
             <string>com.apple.springboard</string>
-            <string>com.apple.siri.SiriUIService</string>
-            <string>com.apple.Preferences</string>
         </array>
     </dict>
 </dict>
