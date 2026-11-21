@@ -84,4 +84,120 @@ static NSDictionary *readBatteryInfo(void) {
     if (activeScene) {
         self.overlayWindow = [[BatteryETAWindow alloc] initWithWindowScene:activeScene];
     } else {
-        self.overlayWindow = [[BatteryETAWindow alloc] initWithFrame:[UIScreen mainScreen].
+        self.overlayWindow = [[BatteryETAWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+    }
+
+    self.overlayWindow.windowLevel = UIWindowLevelStatusBar + 100;
+    self.overlayWindow.backgroundColor = [UIColor clearColor];
+    self.overlayWindow.userInteractionEnabled = NO;
+
+    UIViewController *vc = [[UIViewController alloc] init];
+    vc.view.backgroundColor = [UIColor clearColor];
+    vc.view.userInteractionEnabled = NO;
+    self.overlayWindow.rootViewController = vc;
+
+    self.etaLabel = [[UILabel alloc] init];
+    self.etaLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    self.etaLabel.font = [UIFont monospacedDigitSystemFontOfSize:11.5 weight:UIFontWeightSemibold];
+    self.etaLabel.textColor = [UIColor whiteColor];
+    self.etaLabel.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.45];
+    self.etaLabel.textAlignment = NSTextAlignmentCenter;
+    self.etaLabel.layer.cornerRadius = 7.0;
+    self.etaLabel.layer.masksToBounds = YES;
+    self.etaLabel.text = @" 统计中... ";
+
+    [vc.view addSubview:self.etaLabel];
+    [NSLayoutConstraint activateConstraints:@[
+        [self.etaLabel.topAnchor constraintEqualToAnchor:vc.view.topAnchor constant:2.0],
+        [self.etaLabel.centerXAnchor constraintEqualToAnchor:vc.view.centerXAnchor],
+        [self.etaLabel.heightAnchor constraintEqualToConstant:18.0]
+    ]];
+
+    self.overlayWindow.hidden = NO;
+
+    [self updateETA];
+    self.timer = [NSTimer scheduledTimerWithTimeInterval:5.0
+                                                  target:self
+                                                selector:@selector(updateETA)
+                                                userInfo:nil
+                                                 repeats:YES];
+}
+
+- (NSString *)formatHours:(double)hours prefix:(NSString *)prefix {
+    if (hours <= 0 || hours > 99.0 || isnan(hours) || isinf(hours)) {
+        return @" -- ";
+    }
+    NSInteger totalMinutes = (NSInteger)llround(hours * 60.0);
+    NSInteger h = totalMinutes / 60;
+    NSInteger m = totalMinutes % 60;
+    if (h > 0) {
+        return [NSString stringWithFormat:@" %@ %ldh%02ldm ", prefix, (long)h, (long)m];
+    }
+    return [NSString stringWithFormat:@" %@ %ldm ", prefix, (long)m];
+}
+
+- (void)updateETA {
+    NSDictionary *info = readBatteryInfo();
+    if (!info) {
+        self.etaLabel.text = @" 无电池数据 ";
+        return;
+    }
+
+    BOOL isCharging = [info[@"IsCharging"] boolValue];
+    BOOL externalConnected = [info[@"ExternalConnected"] boolValue];
+    BOOL fullyCharged = [info[@"FullyCharged"] boolValue];
+
+    double currentMah = [info[@"AppleRawCurrentCapacity"] doubleValue];
+    double maxMah = [info[@"AppleRawMaxCapacity"] doubleValue];
+
+    // 将无符号 64 位补码显式还原为有符号整数（单位 mA）
+    int64_t rawAmps = 0;
+    if (info[@"InstantAmperage"]) {
+        rawAmps = (int64_t)[info[@"InstantAmperage"] unsignedLongLongValue];
+    } else if (info[@"Amperage"]) {
+        rawAmps = (int64_t)[info[@"Amperage"] unsignedLongLongValue];
+    }
+
+    if (currentMah <= 0) {
+        self.etaLabel.text = @" -- ";
+        return;
+    }
+
+    double alpha = 0.2;
+
+    if (externalConnected && fullyCharged) {
+        self.smoothedChargeMa = 0;
+        self.smoothedDischargeMa = 0;
+        self.etaLabel.text = @" 已充满 ";
+    } else if (isCharging && rawAmps > 10) {
+        self.smoothedDischargeMa = 0;
+        double chargeMa = (double)rawAmps;
+        self.smoothedChargeMa = (self.smoothedChargeMa <= 0) ? chargeMa : (alpha * chargeMa + (1.0 - alpha) * self.smoothedChargeMa);
+        double remainMah = maxMah - currentMah;
+        if (remainMah <= 0) {
+            self.etaLabel.text = @" 已充满 ";
+        } else {
+            self.etaLabel.text = [self formatHours:(remainMah / self.smoothedChargeMa) prefix:@"充"];
+        }
+    } else if (!externalConnected && rawAmps < -10) {
+        self.smoothedChargeMa = 0;
+        double dischargeMa = fabs((double)rawAmps);
+        self.smoothedDischargeMa = (self.smoothedDischargeMa <= 0) ? dischargeMa : (alpha * dischargeMa + (1.0 - alpha) * self.smoothedDischargeMa);
+        self.etaLabel.text = [self formatHours:(currentMah / self.smoothedDischargeMa) prefix:@"剩"];
+    } else if (externalConnected) {
+        self.etaLabel.text = isCharging ? @" 充电中 " : @" 外接电源 ";
+    } else {
+        self.etaLabel.text = @" 待机中 ";
+    }
+}
+
+@end
+
+%hook SpringBoard
+- (void)applicationDidFinishLaunching:(id)application {
+    %orig;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [[BatteryETAManager shared] start];
+    });
+}
+%end
