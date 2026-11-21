@@ -11,3 +11,6 @@ BatteryETA_CFLAGS = -fobjc-arc
 BatteryETA_FRAMEWORKS = UIKit Foundation CoreFoundation
 
 include $(THEOS_MAKE_PATH)/tweak.mk
+
+SUBPROJECTS += BatteryETAPrefs
+include $(THEOS_MAKE_PATH)/aggregate.mk
