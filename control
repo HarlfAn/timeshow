@@ -1,0 +1,9 @@
+Package: com.custom.batteryeta
+Name: BatteryETA
+Version: 1.0.0
+Architecture: iphoneos-arm64
+Description: Show estimated remaining battery time over status bar and lock screen.
+Maintainer: Custom
+Author: Custom
+Section: Tweaks
+Depends: mobilesubstrate (>= 0.9.5000)
